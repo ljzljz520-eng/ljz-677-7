@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>培训学时记录导入系统</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #333; }
+  header { background: #1f3a5f; color: #fff; padding: 14px 24px; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { font-size: 18px; }
+  header .queue-stat { font-size: 13px; opacity: .85; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #fff; border-radius: 8px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 15px; margin-bottom: 12px; color: #1f3a5f; }
+  .card h2 .tip { font-weight: normal; font-size: 12px; color: #999; margin-left: 8px; }
+  a { color: #2f6fdd; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button { background: #2f6fdd; color: #fff; border: none; border-radius: 4px; padding: 7px 16px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #255cb8; }
+  button:disabled { background: #b0c4e8; cursor: not-allowed; }
+  button.link-btn { background: none; color: #2f6fdd; padding: 2px 6px; }
+  button.link-btn:hover { text-decoration: underline; }
+  input[type=file] { font-size: 13px; }
+  .upload-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #uploadMsg { font-size: 13px; }
+  #uploadMsg.ok { color: #2e7d32; }
+  #uploadMsg.err { color: #c62828; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+  th { background: #fafafa; color: #666; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .st-queued     { background: #fff7e6; color: #d48806; }
+  .st-validating { background: #e6f4ff; color: #1677ff; }
+  .st-uploading  { background: #e6f4ff; color: #1677ff; }
+  .st-completed  { background: #f6ffed; color: #389e0d; }
+  .st-failed     { background: #fff1f0; color: #cf1322; }
+  .bar { position: relative; width: 140px; height: 16px; background: #f0f0f0; border-radius: 8px; overflow: hidden; }
+  .bar .fill { height: 100%; background: linear-gradient(90deg, #69b1ff, #1677ff); transition: width .4s; }
+  .bar.done .fill { background: linear-gradient(90deg, #95de64, #52c41a); }
+  .bar.err .fill { background: linear-gradient(90deg, #ffa39e, #f5222d); }
+  .bar span { position: absolute; inset: 0; text-align: center; font-size: 11px; line-height: 16px; color: #333; }
+  .nums { font-size: 12px; color: #666; }
+  .nums b { color: #333; }
+  .nums .bad { color: #cf1322; }
+  #logView { background: #0d1b2a; color: #cde3ff; font-family: Consolas, monospace; font-size: 12px;
+             padding: 12px; border-radius: 6px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  #logView .WARN { color: #ffd666; }
+  #logView .ERROR { color: #ff7875; }
+  .muted { color: #999; font-size: 12px; }
+  .course-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; font-size: 13px; }
+  .course-grid div { background: #f6f8fb; border-radius: 4px; padding: 6px 10px; }
+  .course-grid code { color: #2f6fdd; margin-right: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>培训学时记录导入系统</h1>
+  <span class="queue-stat" id="queueStat">队列状态加载中…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>① 上传学时文件<span class="tip">支持 .xlsx / .xls / .csv，必需列：姓名、证件号、课程名称、学时数</span></h2>
+    <div class="upload-row">
+      <input type="file" id="file" accept=".xlsx,.xls,.csv">
+      <button id="uploadBtn">上传并创建导入任务</button>
+      <a href="/api/template">下载空白导入模板</a>
+      <span id="uploadMsg"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>② 导入任务<span class="tip">每 1.5 秒自动刷新；校验/上送失败的记录可下载修正模板</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>任务</th><th>文件名</th><th>状态</th><th>进度</th>
+          <th>总数</th><th>有效</th><th>无效</th><th>上送成功</th><th>上送失败</th>
+          <th>创建时间</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="taskBody"><tr><td colspan="11" class="muted">暂无任务</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="card" id="logCard" style="display:none">
+    <h2>任务日志 <span id="logTitle"></span>
+      <button class="link-btn" id="closeLog">关闭</button>
+      <span class="tip" id="logHint">任务执行中每 1.5 秒自动刷新</span>
+    </h2>
+    <div id="logView"></div>
+  </section>
+
+  <section class="card">
+    <h2>③ 课程目录<span class="tip">导入文件中「课程名称」列可填写课程编码或课程名称</span></h2>
+    <div class="course-grid" id="courseGrid"></div>
+  </section>
+</main>
+
+<script>
+const STATUS_TEXT = {
+  queued: '排队中', validating: '校验中', uploading: '上送中',
+  completed: '已完成', failed: '失败',
+};
+let logTaskId = null;
+
+function fmtTime(s) {
+  if (!s) return '-';
+  const d = new Date(s);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+async function loadTasks() {
+  let tasks;
+  try { tasks = await (await fetch('/api/tasks')).json(); }
+  catch { return; }
+  const q = tasks.length && tasks[0].queue ? tasks[0].queue : { pending: 0, running: 0 };
+  document.getElementById('queueStat').textContent = `任务队列：运行中 ${q.running}，排队 ${q.pending}`;
+
+  const body = document.getElementById('taskBody');
+  if (!tasks.length) {
+    body.innerHTML = '<tr><td colspan="11" class="muted">暂无任务</td></tr>';
+    return;
+  }
+  body.innerHTML = tasks.map(t => {
+    const barCls = t.status === 'completed' ? 'done' : (t.status === 'failed' ? 'err' : '');
+    const bad = (t.invalidCount || 0) + (t.failCount || 0);
+    const canFix = bad > 0 && (t.status === 'completed' || t.status === 'failed');
+    const errTip = t.error ? ` title="${t.error.replace(/"/g, '&quot;')}"` : '';
+    return `<tr>
+      <td>#${t.id}</td>
+      <td${errTip}>${t.filename}</td>
+      <td><span class="badge st-${t.status}">${STATUS_TEXT[t.status] || t.status}</span></td>
+      <td><div class="bar ${barCls}"><div class="fill" style="width:${t.percent}%"></div><span>${t.percent}%</span></div></td>
+      <td class="nums"><b>${t.totalRows}</b></td>
+      <td class="nums"><b>${t.validCount}</b></td>
+      <td class="nums">${t.invalidCount ? `<b class="bad">${t.invalidCount}</b>` : 0}</td>
+      <td class="nums"><b>${t.successCount}</b></td>
+      <td class="nums">${t.failCount ? `<b class="bad">${t.failCount}</b>` : 0}</td>
+      <td class="nums">${fmtTime(t.createdAt)}</td>
+      <td>
+        <button class="link-btn" onclick="showLogs(${t.id})">日志</button>
+        ${canFix ? `<a href="/api/tasks/${t.id}/correction-template">修正模板(${bad})</a>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadLogs() {
+  if (logTaskId === null) return;
+  const res = await fetch(`/api/tasks/${logTaskId}/logs`);
+  if (!res.ok) return;
+  const logs = await res.json();
+  const view = document.getElementById('logView');
+  view.innerHTML = logs.map(l =>
+    `<div class="${l.level}">[${fmtTime(l.ts)}] [${l.level}] ${l.message
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`
+  ).join('');
+  view.scrollTop = view.scrollHeight;
+}
+
+function showLogs(id) {
+  logTaskId = id;
+  document.getElementById('logCard').style.display = 'block';
+  document.getElementById('logTitle').textContent = `#${id}`;
+  loadLogs();
+  document.getElementById('logCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('closeLog').onclick = () => {
+  logTaskId = null;
+  document.getElementById('logCard').style.display = 'none';
+};
+
+document.getElementById('uploadBtn').onclick = async () => {
+  const input = document.getElementById('file');
+  const msg = document.getElementById('uploadMsg');
+  if (!input.files.length) {
+    msg.className = 'err'; msg.textContent = '请先选择文件'; return;
+  }
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  msg.className = ''; msg.textContent = '上传中…';
+  try {
+    const res = await fetch('/api/tasks', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '上传失败');
+    msg.className = 'ok';
+    msg.textContent = `任务 #${data.taskId} 已创建，正在排队处理`;
+    input.value = '';
+    loadTasks();
+    showLogs(data.taskId);
+  } catch (e) {
+    msg.className = 'err'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+async function loadCourses() {
+  const courses = await (await fetch('/api/courses')).json();
+  document.getElementById('courseGrid').innerHTML =
+    courses.map(c => `<div><code>${c.code}</code>${c.name}</div>`).join('');
+}
+
+loadCourses();
+loadTasks();
+setInterval(loadTasks, 1500);
+setInterval(loadLogs, 1500);
+</script>
+</body>
+</html>
