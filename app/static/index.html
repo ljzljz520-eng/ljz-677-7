@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>培训学时记录导入系统</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f2f5; color: #333; }
+  header { background: #1f3a5f; color: #fff; padding: 14px 24px; font-size: 18px; font-weight: 600; }
+  main { max-width: 1180px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; }
+  .card { background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 15px; margin-bottom: 12px; color: #1f3a5f; border-left: 4px solid #1f3a5f; padding-left: 8px; }
+  .upload-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button { background: #1f3a5f; color: #fff; border: none; border-radius: 5px; padding: 8px 18px; cursor: pointer; font-size: 14px; }
+  button:disabled { background: #9aa7b8; cursor: not-allowed; }
+  .hint { font-size: 12px; color: #888; line-height: 1.7; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; white-space: nowrap; }
+  th { background: #f7f9fb; color: #666; font-weight: 600; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f5f8ff; }
+  tbody tr.selected { background: #e8f0fe; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; color: #fff; }
+  .st-PENDING { background: #8a94a6; } .st-RUNNING { background: #2f7cf6; }
+  .st-DONE { background: #2ea44f; } .st-DONE_WITH_ERRORS { background: #e8a13a; }
+  .st-FAILED { background: #d64545; }
+  .bar { width: 140px; height: 10px; background: #e6e9ef; border-radius: 5px; overflow: hidden; display: inline-block; vertical-align: middle; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#2f7cf6,#54c7ec); transition: width .4s; }
+  .bar.done > i { background: #2ea44f; } .bar.warn > i { background: #e8a13a; } .bar.fail > i { background: #d64545; }
+  .pct { font-size: 12px; color: #666; margin-left: 6px; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+  .chip { background: #f2f5f9; border-radius: 6px; padding: 6px 12px; font-size: 13px; }
+  .chip b { font-size: 16px; margin-left: 4px; }
+  .chip.err b { color: #d64545; } .chip.ok b { color: #2ea44f; }
+  #logBox { background: #10151c; color: #c9d6e3; font-family: Consolas, monospace; font-size: 12px;
+            height: 240px; overflow-y: auto; border-radius: 6px; padding: 10px 12px; line-height: 1.8; white-space: pre-wrap; }
+  #logBox .ERROR { color: #ff7b72; } #logBox .WARN { color: #f2cc60; } #logBox .INFO { color: #7ee787; }
+  .link-btn { background: none; color: #2f7cf6; padding: 0; font-size: 13px; text-decoration: underline; }
+  .link-btn:disabled { color: #b6c0cd; text-decoration: none; }
+  .err-src { font-size: 12px; padding: 1px 8px; border-radius: 8px; }
+  .src-LOCAL { background: #fff1f0; color: #cf1322; }
+  .src-PLATFORM { background: #fff7e6; color: #d48806; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .muted { color: #999; font-size: 12px; }
+  #detailEmpty { color: #999; font-size: 13px; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>培训学时记录导入系统</header>
+<main>
+  <div class="card">
+    <h2>1. 上传学时记录文件</h2>
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept=".csv,.xlsx">
+      <button id="uploadBtn">上传并导入</button>
+      <span class="muted" id="uploadMsg"></span>
+    </div>
+    <p class="hint">
+      支持 CSV（UTF-8/GBK）与 XLSX。必要列：姓名、证件号、课程代码、课程名称、学时、培训日期（YYYY-MM-DD）。<br>
+      系统将依次执行：解析 → 本地校验 → 分批上送行业平台；平台退回的异常明细可下载「修正模板」，修正后直接重新上传即可。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>2. 导入任务 <span class="muted" id="queueInfo"></span></h2>
+    <table>
+      <thead><tr>
+        <th>ID</th><th>文件名</th><th>模式</th><th>状态</th><th>阶段</th><th>进度</th>
+        <th>总数</th><th>有效</th><th>本地异常</th><th>已上送</th><th>平台退回</th><th>创建时间</th><th>操作</th>
+      </tr></thead>
+      <tbody id="jobTbody"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="detailCard">
+    <h2>3. 任务详情 <span class="muted" id="detailTitle"></span></h2>
+    <div id="detailEmpty">点击上方任务查看详情</div>
+    <div id="detailBody" style="display:none">
+      <div class="chips" id="statChips"></div>
+      <div class="grid2">
+        <div>
+          <h2 style="margin-bottom:8px">异常明细</h2>
+          <div style="max-height:240px;overflow:auto">
+          <table>
+            <thead><tr><th>行号</th><th>来源</th><th>错误码</th><th>原因</th></tr></thead>
+            <tbody id="errTbody"></tbody>
+          </table>
+          </div>
+        </div>
+        <div>
+          <h2 style="margin-bottom:8px">任务日志</h2>
+          <div id="logBox"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>课程目录对照（本地 vs 行业平台）</h2>
+    <table>
+      <thead><tr><th>课程代码</th><th>课程名称</th><th>本地学时上限</th><th>平台学时上限</th></tr></thead>
+      <tbody id="courseTbody"></tbody>
+    </table>
+    <p class="hint" id="platformCodes"></p>
+  </div>
+</main>
+
+<script>
+const STATUS_TEXT = {PENDING:"排队中", RUNNING:"处理中", DONE:"已完成", DONE_WITH_ERRORS:"完成(含异常)", FAILED:"失败"};
+const PHASE_TEXT = {PARSING:"解析文件", VALIDATING:"本地校验", UPLOADING:"上送平台"};
+let selectedJob = null, lastLogId = 0, detailTimer = null;
+
+async function api(url, opts) { const r = await fetch(url, opts); if (!r.ok) throw new Error((await r.json()).detail || r.statusText); return r.json(); }
+
+document.getElementById('uploadBtn').onclick = async () => {
+  const f = document.getElementById('fileInput').files[0];
+  const msg = document.getElementById('uploadMsg');
+  if (!f) { msg.textContent = '请先选择文件'; return; }
+  const fd = new FormData(); fd.append('file', f);
+  const btn = document.getElementById('uploadBtn'); btn.disabled = true;
+  try {
+    const res = await api('/api/jobs', {method:'POST', body: fd});
+    msg.textContent = `已创建任务 #${res.job_id}，正在排队处理`;
+    loadJobs();
+  } catch (e) { msg.textContent = '上传失败：' + e.message; }
+  finally { btn.disabled = false; }
+};
+
+function barHtml(j) {
+  let cls = 'bar';
+  if (j.status === 'DONE') cls += ' done';
+  else if (j.status === 'DONE_WITH_ERRORS') cls += ' warn';
+  else if (j.status === 'FAILED') cls += ' fail';
+  return `<span class="${cls}"><i style="width:${j.percent}%"></i></span><span class="pct">${j.percent}%</span>`;
+}
+
+async function loadJobs() {
+  try {
+    const data = await api('/api/jobs');
+    document.getElementById('queueInfo').textContent = data.queue_pending ? `（队列等待 ${data.queue_pending} 个）` : '';
+    const tb = document.getElementById('jobTbody');
+    tb.innerHTML = data.jobs.map(j => `
+      <tr data-id="${j.id}" class="${selectedJob===j.id?'selected':''}">
+        <td>#${j.id}</td><td>${esc(j.filename)}</td>
+        <td>${j.mode==='CORRECTION'?'修正重传':'正常导入'}</td>
+        <td><span class="badge st-${j.status}">${STATUS_TEXT[j.status]||j.status}</span></td>
+        <td>${PHASE_TEXT[j.phase]||'-'}</td><td>${barHtml(j)}</td>
+        <td>${j.total_rows}</td><td>${j.valid_rows}</td>
+        <td style="color:${j.invalid_rows?'#d64545':'inherit'}">${j.invalid_rows}</td>
+        <td>${j.uploaded_rows}</td>
+        <td style="color:${j.rejected_rows?'#d48806':'inherit'}">${j.rejected_rows}</td>
+        <td>${j.created_at}</td>
+        <td>${(j.invalid_rows+j.rejected_rows)>0 && ['DONE','DONE_WITH_ERRORS'].includes(j.status)
+              ? `<a class="link-btn" href="/api/jobs/${j.id}/correction-template" download>修正模板</a>` : ''}</td>
+      </tr>`).join('');
+    tb.querySelectorAll('tr').forEach(tr => tr.onclick = () => selectJob(+tr.dataset.id));
+    if (selectedJob && !data.jobs.some(j => j.id === selectedJob)) clearDetail();
+  } catch (e) { console.error(e); }
+}
+
+function selectJob(id) {
+  selectedJob = id; lastLogId = 0;
+  document.getElementById('logBox').innerHTML = '';
+  document.querySelectorAll('#jobTbody tr').forEach(tr => tr.classList.toggle('selected', +tr.dataset.id === id));
+  loadDetail();
+  if (detailTimer) clearInterval(detailTimer);
+  detailTimer = setInterval(loadDetail, 1200);
+}
+
+function clearDetail() {
+  selectedJob = null;
+  document.getElementById('detailBody').style.display = 'none';
+  document.getElementById('detailEmpty').style.display = 'block';
+  if (detailTimer) { clearInterval(detailTimer); detailTimer = null; }
+}
+
+async function loadDetail() {
+  if (!selectedJob) return;
+  try {
+    const [j, logs, errs] = await Promise.all([
+      api(`/api/jobs/${selectedJob}`),
+      api(`/api/jobs/${selectedJob}/logs?after_id=${lastLogId}`),
+      api(`/api/jobs/${selectedJob}/errors`),
+    ]);
+    document.getElementById('detailEmpty').style.display = 'none';
+    document.getElementById('detailBody').style.display = 'block';
+    document.getElementById('detailTitle').textContent = `#${j.id} ${j.filename}`;
+    document.getElementById('statChips').innerHTML = `
+      <span class="chip">总行数<b>${j.total_rows}</b></span>
+      <span class="chip">本地有效<b>${j.valid_rows}</b></span>
+      <span class="chip err">本地异常<b>${j.invalid_rows}</b></span>
+      <span class="chip ok">成功上送<b>${j.uploaded_rows}</b></span>
+      <span class="chip err">平台退回<b>${j.rejected_rows}</b></span>
+      <span class="chip">状态<b>${STATUS_TEXT[j.status]||j.status}</b></span>
+      ${j.error ? `<span class="chip err">错误：${esc(j.error)}</span>` : ''}`;
+    document.getElementById('errTbody').innerHTML = errs.errors.map(e => `
+      <tr><td>${e.row_no}</td>
+          <td><span class="err-src src-${e.source}">${e.source==='LOCAL'?'本地校验':'行业平台'}</span></td>
+          <td>${e.code||''}</td><td style="white-space:normal">${esc(e.message)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">无异常</td></tr>';
+    const box = document.getElementById('logBox');
+    for (const l of logs.logs) {
+      const div = document.createElement('div');
+      div.innerHTML = `<span class="muted">${l.ts}</span> <span class="${l.level}">[${l.level}]</span> ${esc(l.message)}`;
+      box.appendChild(div); lastLogId = l.id;
+    }
+    if (logs.logs.length) box.scrollTop = box.scrollHeight;
+    if (['DONE','DONE_WITH_ERRORS','FAILED'].includes(j.status) && detailTimer) {
+      // 终态后再刷新一两次即可停止
+      setTimeout(() => { if (detailTimer) { clearInterval(detailTimer); detailTimer = null; } }, 3000);
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function loadCourses() {
+  const data = await api('/api/courses');
+  document.getElementById('courseTbody').innerHTML = data.courses.map(c => `
+    <tr><td>${c.code}</td><td>${esc(c.name)}</td><td>${c.local_max_hours}</td>
+        <td>${c.platform_max_hours ?? '未收录'}</td></tr>`).join('');
+  document.getElementById('platformCodes').textContent =
+    '平台错误码：' + Object.entries(data.platform_error_codes).map(([k,v]) => `${k} ${v}`).join('；');
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+loadCourses(); loadJobs();
+setInterval(loadJobs, 2000);
+</script>
+</body>
+</html>
